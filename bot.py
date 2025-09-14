@@ -38,8 +38,11 @@ async def on_message(message):
                 break
 
         if user_thread is None:
-            # Create a new thread if one doesn't exist
-            user_thread = await modmail_channel.create_thread(name=str(message.author.id), auto_archive_duration=10080)  # Use auto_archive_duration in minutes
+            user_thread = await modmail_channel.create_thread(
+                name=str(message.author.id),
+                type=discord.ChannelType.public_thread,
+                auto_archive_duration=10080  # Use auto_archive_duration in minutes
+            )
 
         # Create an embedded message for the modmail thread
         embed = discord.Embed(
