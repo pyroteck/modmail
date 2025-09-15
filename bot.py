@@ -1,5 +1,7 @@
 import discord
 from discord.ext import commands
+import json
+import io
 
 intents = discord.Intents.default()
 intents.messages = True
@@ -8,7 +10,10 @@ intents.dm_messages = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-MODMAIL_CHANNEL_ID = 0000000000000000000  # Replace with your modmail channel ID
+with open('secrets.json') as config_file:
+    config = json.load(config_file)
+
+MODMAIL_CHANNEL_ID = int(config.get("MODMAIL_CHANNEL_ID"))
 
 @bot.event
 async def on_ready():
@@ -41,7 +46,7 @@ async def on_message(message):
             user_thread = await modmail_channel.create_thread(
                 name=str(message.author.id),
                 type=discord.ChannelType.public_thread,
-                auto_archive_duration=10080  # Use auto_archive_duration in minutes
+                auto_archive_duration=10080
             )
 
         # Create an embedded message for the modmail thread
@@ -52,33 +57,64 @@ async def on_message(message):
         embed.set_author(name=message.author.name, icon_url=message.author.avatar.url if message.author.avatar else discord.Embed.Empty)
         embed.timestamp = message.created_at
 
-        # Send the embedded message to the thread and get the message object
-        sent_message = await user_thread.send(embed=embed)  # Send the embedded message to the thread
-        # Create a link to the sent message
+        # Handle images in the message
+        files = []
+        if message.attachments:
+            for attachment in message.attachments:
+                if attachment.content_type and attachment.content_type.startswith('image/'):
+                    # Download the image
+                    image_data = await attachment.read()
+                    file = discord.File(io.BytesIO(image_data), filename=attachment.filename)
+                    files.append(file)
+
+        # Send the embedded message first, then files
+        sent_message = await user_thread.send(embed=embed)
+
+        # If there are files, send them as a separate message
+        if files:
+            await user_thread.send(files=files)
+
         message_link = f"https://discord.com/channels/{modmail_channel.guild.id}/{user_thread.id}/{sent_message.id}"
-        # Send the link to the modmail channel
         await modmail_channel.send(f"@here new ModMail message from <@{message.author.id}>. [Click here to view]({message_link})")
 
         await message.author.send("Your message has been sent to the mods. You will receive a response shortly.")
 
     elif isinstance(message.channel, discord.Thread):
-        # Assuming the thread name is the user's ID
-        user_id = int(message.channel.name)
-        user = await bot.fetch_user(user_id)
+        # Check if the message is a reply to the modmail embed
+        if message.reference and message.reference.message_id:
+            referenced_message = message.reference.cached_message or await message.channel.fetch_message(message.reference.message_id)
 
-        # Create an embedded message for the user
-        embed = discord.Embed(
-            title="Response from a mod",
-            description=message.content,
-            color=discord.Color.green()
-        )
-        embed.timestamp = message.created_at
+            if referenced_message.embeds and referenced_message.embeds[0].color == discord.Color.blue():
+                # This is a response to a modmail message
+                user_id = int(message.channel.name)
+                user = await bot.fetch_user(user_id)
 
-        await user.send(embed=embed)  # Send the embedded message to the user
+                # Create an embedded message for the user
+                embed = discord.Embed(
+                    title="Response from a mod",
+                    description=message.content,
+                    color=discord.Color.green()
+                )
+                embed.timestamp = message.created_at
 
-        # Send a confirmation message to the mod
-        await message.channel.send("Response sent")
+                # Handle images in the response
+                files = []
+                if message.attachments:
+                    for attachment in message.attachments:
+                        if attachment.content_type and attachment.content_type.startswith('image/'):
+                            image_data = await attachment.read()
+                            file = discord.File(io.BytesIO(image_data), filename=attachment.filename)
+                            files.append(file)
+
+                # Send embed first, then files if any
+                sent_message = await user.send(embed=embed)
+
+                # If there are files, send them as a separate message
+                if files:
+                    await user.send(files=files)
+
+                await message.channel.send("Response sent")
 
     await bot.process_commands(message)
 
-bot.run('')  # Replace with your bot token
+bot.run(config.get("CLIENT_TOKEN"))
