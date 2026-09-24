@@ -1,14 +1,13 @@
+from datetime import datetime
 import discord
 from discord.ext import commands
 import json
 import io
+import pytz
 
-intents = discord.Intents.default()
-intents.messages = True
-intents.message_content = True
-intents.dm_messages = True
-
+intents = discord.Intents.all()
 bot = commands.Bot(command_prefix='!', intents=intents)
+timezone = pytz.timezone("America/Los_Angeles")
 
 with open('secrets.json') as config_file:
     config = json.load(config_file)
@@ -23,6 +22,90 @@ async def on_ready():
         print(f"Modmail channel with ID {MODMAIL_CHANNEL_ID} not found.")
     else:
         print(f"Modmail channel is {modmail_channel.name}")
+
+# Modal for the form submission
+class FormModal(discord.ui.Modal, title='CHAI-MAIL Form Submission'):
+    def __init__(self, thread_id, user_id):
+        super().__init__(timeout=180)  # 3 minute timeout
+        self.thread_id = thread_id
+        self.user_id = user_id
+
+        # Define text inputs as instance attributes
+        self.general_nature = discord.ui.TextInput(
+            label='Package Information',
+            placeholder='What is the general nature of what you\'d like to send?',
+            style=discord.TextStyle.long,
+            required=True
+        )
+
+        self.sender_type = discord.ui.TextInput(
+            label='Sender Type',
+            placeholder='Are you sending something from yourself, or on behalf of someone else?',
+            style=discord.TextStyle.long,
+            required=True
+        )
+
+        self.special_handling = discord.ui.TextInput(
+            label='Special Handling Requirements',
+            placeholder='Are there any unusual contents, special handling requirements, or other things to be noted?',
+            style=discord.TextStyle.long,
+            required=False
+        )
+
+        # Add the text inputs to the modal
+        self.add_item(self.general_nature)
+        self.add_item(self.sender_type)
+        self.add_item(self.special_handling)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        # Process the form submission
+        response_embed = discord.Embed(
+            title=f"Form Submission Response",
+            description=f"Submitted by <@{self.user_id}>\n"
+                        f"User ID: `{self.user_id}`",
+            color=discord.Color.green(),
+            timestamp=datetime.now(timezone)
+        )
+
+        response_embed.add_field(
+            name="General Nature",
+            value=self.general_nature.value,
+            inline=False
+        )
+
+        response_embed.add_field(
+            name="Sender Type",
+            value=self.sender_type.value,
+            inline=False
+        )
+
+        response_embed.add_field(
+            name="Special Handling",
+            value=self.special_handling.value if self.special_handling.value else "None provided",
+            inline=False
+        )
+
+        # Send the response back to the modmail thread
+        modmail_channel = bot.get_channel(MODMAIL_CHANNEL_ID)
+        if modmail_channel:
+            thread = modmail_channel.get_thread(self.thread_id)
+            if thread:
+                await thread.send(embed=response_embed)
+
+        await interaction.response.send_message("Your form has been submitted successfully!", ephemeral=True)
+
+# View for the form button
+class FormButtonView(discord.ui.View):
+    def __init__(self, user_id, thread_id):
+        super().__init__(timeout=180)  # 3 minute timeout
+        self.user_id = user_id
+        self.thread_id = thread_id
+
+    @discord.ui.button(label="Complete Form", style=discord.ButtonStyle.primary, custom_id="open_form")
+    async def open_form_button(self, interaction, button):
+        # Create and send the modal correctly
+        modal = FormModal(self.thread_id, self.user_id)
+        await interaction.response.send_modal(modal)
 
 @bot.event
 async def on_message(message):
@@ -43,11 +126,15 @@ async def on_message(message):
                 break
 
         if user_thread is None:
-            user_thread = await modmail_channel.create_thread(
-                name=str(message.author.id),
-                type=discord.ChannelType.public_thread,
-                auto_archive_duration=10080
-            )
+            try:
+                user_thread = await modmail_channel.create_thread(
+                    name=str(message.author.id),
+                    type=discord.ChannelType.public_thread,
+                    auto_archive_duration=10080
+                )
+            except discord.Forbidden:
+                await message.author.send("I couldn't create a modmail thread. Please try again later or contact a moderator directly.")
+                return
 
         # Create an embedded message for the modmail thread
         embed = discord.Embed(
@@ -113,8 +200,49 @@ async def on_message(message):
                 if files:
                     await user.send(files=files)
 
-                await message.channel.send("Response sent")
+                await message.channel.send("Response sent to user")
 
     await bot.process_commands(message)
+
+# Command to send the form
+@bot.command(name="sendmailform")
+@commands.has_permissions(administrator=True)
+async def sendmailform(ctx):
+    # Check if the command is used in a modmail thread
+    if not isinstance(ctx.channel, discord.Thread):
+        await ctx.reply("This command can only be used in a modmail thread!", delete_after=5)
+        return
+
+    # Verify this is a modmail thread (by checking the parent channel)
+    if not ctx.channel.parent_id == MODMAIL_CHANNEL_ID:
+        await ctx.reply("This command can only be used in a modmail thread!", delete_after=5)
+        return
+
+    # Get the user ID from the thread name
+    user_id = int(ctx.channel.name)  # This gets the user ID from thread name
+    user = await bot.fetch_user(user_id)
+
+    # Create the form embed
+    form_embed = discord.Embed(
+        title="📬 CHAI-MAIL MINI FORM 📬",
+        description="This form is required to be submitted before the mailing address is provided.\n"
+                    "Click the button below to open the form.",
+        color=discord.Color.orange()
+    )
+
+    # Create a view with the form button
+    view = FormButtonView(user_id, ctx.channel.id)
+
+    try:
+        # Send the form to the user
+        await user.send(embed=form_embed, view=view)
+        await ctx.reply(f"Interactive form sent to <@{user_id}> successfully!", delete_after=5)
+    except discord.Forbidden:
+        await ctx.reply("I couldn't send the form to the user. They may have DMs disabled.", delete_after=5)
+
+@sendmailform.error
+async def lockdown_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        print(f"Attempt from {ctx.author} (user ID: {ctx.author.id}) to run sendmailform command.")
 
 bot.run(config.get("CLIENT_TOKEN"))
