@@ -23,31 +23,70 @@ async def on_ready():
     else:
         print(f"Modmail channel is {modmail_channel.name}")
 
+class FormResponses():
+    def __init__(self):
+        self.general_nature = {
+            "label": "Package Information",
+            "description": "What is the general nature of what you'd like to send?",
+            "input": ""
+        }
+        self.sender_type = {
+            "label": "Sender Type",
+            "description": "Are you sending something from yourself, or on behalf of someone else?",
+            "input": ""
+        }
+        self.special_handling = {
+            "label": "Special Handling Requirements",
+            "description": "Are there any unusual contents, special handling requirements, or other things to be noted?",
+            "input": "No response"
+        }
+        self.stream_opening = {
+            "label": "Stream Opening",
+            "description": "Are you comfortable with the contents being opened on stream?",
+            "input": ""
+        }
+        self.mailbox_privacy = {
+            "label": "Mailbox Privacy",
+            "description": "Do you understand the mailbox address is private and should not be reposted or shared with others?",
+            "input": ""
+        }
+        self.safety_concerns = {
+            "label": "Safety Concerns",
+            "description": "Are you comfortable with Chai/the mod team declining your package for safety concerns?",
+            "input": ""
+        }
+        self.claim_rights = {
+            "label": "Claim Rights",
+            "description": "Do you agree that once an item is delivered, you forfeit the right to claim it back?",
+            "input": ""
+        }
+
 # Modal for the form submission
 class FormModal(discord.ui.Modal, title='CHAI-MAIL Form Submission'):
     def __init__(self, thread_id, user_id):
-        super().__init__(timeout=180)  # 3 minute timeout
+        super().__init__()
         self.thread_id = thread_id
         self.user_id = user_id
+        self.responses = FormResponses()
 
         # Define text inputs as instance attributes
         self.general_nature = discord.ui.TextInput(
-            label='Package Information',
-            placeholder='What is the general nature of what you\'d like to send?',
+            label=self.responses.general_nature["label"],
+            placeholder=self.responses.general_nature["description"],
             style=discord.TextStyle.long,
             required=True
         )
 
         self.sender_type = discord.ui.TextInput(
-            label='Sender Type',
-            placeholder='Are you sending something from yourself, or on behalf of someone else?',
+            label=self.responses.sender_type["label"],
+            placeholder=self.responses.special_handling["description"],
             style=discord.TextStyle.long,
             required=True
         )
 
         self.special_handling = discord.ui.TextInput(
-            label='Special Handling Requirements',
-            placeholder='Are there any unusual contents, special handling requirements, or other things to be noted?',
+            label=self.responses.special_handling["label"],
+            placeholder=self.responses.special_handling["description"],
             style=discord.TextStyle.long,
             required=False
         )
@@ -58,50 +97,143 @@ class FormModal(discord.ui.Modal, title='CHAI-MAIL Form Submission'):
         self.add_item(self.special_handling)
 
     async def on_submit(self, interaction: discord.Interaction):
-        # Process the form submission
-        response_embed = discord.Embed(
-            title=f"Form Submission Response",
+        self.responses.general_nature["input"]=self.general_nature.value
+        self.responses.sender_type["input"]=self.sender_type.value
+        if self.special_handling.value:
+            self.responses.special_handling["input"] = self.special_handling.value
+
+        # Delete the original message with the form button
+        try:
+            await interaction.message.delete()
+        except:
+            pass
+
+        # Send a new message with the agreement form button
+        agreement_embed = discord.Embed(
+            title="📄 CHAI-MAIL AGREEMENTS 📄",
+            description="Form responses saved. Please complete this agreement form as well to submit it!",
+            color=discord.Color.light_gray()
+        )
+
+        agreement_view = AgreementButtonView(self.user_id, self.thread_id, self.responses)
+
+        # Send the agreement form to the user
+        user = await bot.fetch_user(self.user_id)
+        try:
+            await user.send(embed=agreement_embed, view=agreement_view)
+        except discord.Forbidden:
+            print("Error happened.")
+
+        await interaction.response.defer()
+
+class AgreementModal(discord.ui.Modal, title='CHAI-MAIL Agreement Form'):
+    def __init__(self, thread_id, user_id, responses: FormResponses):
+        super().__init__()
+        self.thread_id = thread_id
+        self.user_id = user_id
+        self.responses = responses
+
+        self.stream_opening = discord.ui.TextInput(
+            label=self.responses.stream_opening["label"],
+            placeholder=self.responses.stream_opening["description"],
+            style=discord.TextStyle.long,
+            required=True
+        )
+        self.mailbox_privacy = discord.ui.TextInput(
+            label=self.responses.mailbox_privacy["label"],
+            placeholder=self.responses.mailbox_privacy["description"],
+            style=discord.TextStyle.long,
+            required=True
+        )
+        self.safety_concerns = discord.ui.TextInput(
+            label=self.responses.safety_concerns["label"],
+            placeholder=self.responses.safety_concerns["description"],
+            style=discord.TextStyle.long,
+            required=True
+        )
+        self.claim_rights = discord.ui.TextInput(
+            label=self.responses.claim_rights["label"],
+            placeholder=self.responses.claim_rights["description"],
+            style=discord.TextStyle.long,
+            required=True
+        )
+
+        # Add the text inputs to the modal
+        self.add_item(self.stream_opening)
+        self.add_item(self.mailbox_privacy)
+        self.add_item(self.safety_concerns)
+        self.add_item(self.claim_rights)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        # Delete the original message with the form button
+        try:
+            await interaction.message.delete()
+        except:
+            pass
+
+        # Process the agreement form submission
+        form_embed = discord.Embed(
+            title="Mail Form Response",
             description=f"Submitted by <@{self.user_id}>\n"
                         f"User ID: `{self.user_id}`",
             color=discord.Color.green(),
             timestamp=datetime.now(timezone)
         )
-
-        response_embed.add_field(
-            name="General Nature",
-            value=self.general_nature.value,
-            inline=False
+        user_response_embed=discord.Embed(
+            title="Form Submitted Successfully ✅",
+            description="Your form has been submitted to the mods with the following information:",
+            color=discord.Color.green(),
+            timestamp=datetime.now(timezone)
         )
 
-        response_embed.add_field(
-            name="Sender Type",
-            value=self.sender_type.value,
-            inline=False
-        )
+        self.responses.stream_opening["input"] = self.stream_opening.value
+        self.responses.mailbox_privacy["input"] = self.mailbox_privacy.value
+        self.responses.safety_concerns["input"] = self.safety_concerns.value
+        self.responses.claim_rights["input"] = self.claim_rights.value
 
-        response_embed.add_field(
-            name="Special Handling",
-            value=self.special_handling.value if self.special_handling.value else "None provided",
-            inline=False
-        )
-
+        for key, value in vars(self.responses).items():
+            form_embed.add_field(
+                name=value["description"],
+                value=value["input"],
+                inline=False
+            )
+            user_response_embed.add_field(
+                name=value["description"],
+                value=value["input"],
+                inline=False
+            )
         # Send the response back to the modmail thread
         modmail_channel = bot.get_channel(MODMAIL_CHANNEL_ID)
         if modmail_channel:
             thread = modmail_channel.get_thread(self.thread_id)
             if thread:
-                await thread.send(embed=response_embed)
+                await thread.send(embed=form_embed)
 
-        await interaction.response.send_message("Your form has been submitted successfully!", ephemeral=True)
+        await interaction.response.send_message(embed=user_response_embed)
+
+
+class AgreementButtonView(discord.ui.View):
+    def __init__(self, user_id, thread_id, responses: FormResponses):
+        super().__init__()
+        self.user_id = user_id
+        self.thread_id = thread_id
+        self.responses = responses
+
+    @discord.ui.button(label="Complete Agreement Form (2/2)", style=discord.ButtonStyle.primary, custom_id="open_agreement_form")
+    async def open_agreement_form_button(self, interaction, button):
+        # Create and send the agreement modal
+        modal = AgreementModal(self.thread_id, self.user_id, self.responses)
+        await interaction.response.send_modal(modal)
+
 
 # View for the form button
 class FormButtonView(discord.ui.View):
     def __init__(self, user_id, thread_id):
-        super().__init__(timeout=180)  # 3 minute timeout
+        super().__init__()
         self.user_id = user_id
         self.thread_id = thread_id
 
-    @discord.ui.button(label="Complete Form", style=discord.ButtonStyle.primary, custom_id="open_form")
+    @discord.ui.button(label="Complete Info Form (1/2)", style=discord.ButtonStyle.primary, custom_id="open_form")
     async def open_form_button(self, interaction, button):
         # Create and send the modal correctly
         modal = FormModal(self.thread_id, self.user_id)
@@ -227,7 +359,7 @@ async def sendmailform(ctx):
         title="📬 CHAI-MAIL MINI FORM 📬",
         description="This form is required to be submitted before the mailing address is provided.\n"
                     "Click the button below to open the form.",
-        color=discord.Color.orange()
+        color=discord.Color.light_gray()
     )
 
     # Create a view with the form button
@@ -236,9 +368,9 @@ async def sendmailform(ctx):
     try:
         # Send the form to the user
         await user.send(embed=form_embed, view=view)
-        await ctx.reply(f"Interactive form sent to <@{user_id}> successfully!", delete_after=5)
+        await ctx.reply(f"Mail form sent to <@{user_id}>.")
     except discord.Forbidden:
-        await ctx.reply("I couldn't send the form to the user. They may have DMs disabled.", delete_after=5)
+        await ctx.reply("I couldn't send the form to the user. They may have DMs disabled.")
 
 @sendmailform.error
 async def lockdown_error(ctx, error):
